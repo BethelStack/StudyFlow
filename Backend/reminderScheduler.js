@@ -1,69 +1,137 @@
 const pool = require("./db");
 
+let isChecking = false;
+
 function checkReminders() {
+  // Prevent overlapping checks in this server instance
+  if (isChecking) {
+    return;
+  }
+
+  isChecking = true;
+
   const sql = `
         SELECT id, title, user_id
         FROM tasks
         WHERE reminder_at IS NOT NULL
-          AND reminder_at <= UTC_TIMESTAMP()
-          AND reminder_sent = FALSE
-          AND status != 'completed'
+        AND reminder_at <= UTC_TIMESTAMP()
+        AND reminder_sent = FALSE
+        AND status != 'completed'
+        AND user_id IS NOT NULL
     `;
 
   pool.query(sql, (err, tasks) => {
     if (err) {
-      console.error("Error checking reminders:", err.message);
+      console.error("Error checking reminders:", err);
+      isChecking = false;
       return;
     }
 
-    tasks.forEach((task) => {
-      // A notification needs a user to receive it.
-      if (!task.user_id) {
-        console.log(`Task ${task.id} has no assigned user. Skipping reminder.`);
+    let index = 0;
+
+    function processNextTask() {
+      if (index >= tasks.length) {
+        isChecking = false;
         return;
       }
 
-      const notificationSql = `
-                INSERT INTO notifications (user_id, task_id, message)
-                VALUES (?, ?, ?)
-            `;
+      const task = tasks[index++];
 
-      const message = `Reminder: ${task.title} is due soon.`;
+      pool.getConnection((connectionError, connection) => {
+        if (connectionError) {
+          console.error(connectionError);
+          return processNextTask();
+        }
 
-      pool.query(
-        notificationSql,
-        [task.user_id, task.id, message],
-        (notificationError) => {
-          if (notificationError) {
-            console.error(
-              "Error creating notification:",
-              notificationError.message,
-            );
-            return;
+        connection.beginTransaction((transactionError) => {
+          if (transactionError) {
+            connection.release();
+            console.error(transactionError);
+            return processNextTask();
           }
 
-          const updateSql = `
+          // Claim this reminder first
+          const claimSql = `
                         UPDATE tasks
                         SET reminder_sent = TRUE
-                        WHERE id = ? AND reminder_sent = FALSE
+                        WHERE id = ?
+                        AND reminder_sent = FALSE
+                        AND reminder_at <= UTC_TIMESTAMP()
+                        AND status != 'completed'
                     `;
 
-          pool.query(updateSql, [task.id], (updateError) => {
-            if (updateError) {
-              console.error("Error updating reminder:", updateError.message);
-              return;
+          connection.query(claimSql, [task.id], (claimError, result) => {
+            if (claimError) {
+              return connection.rollback(() => {
+                connection.release();
+                console.error(claimError);
+                processNextTask();
+              });
             }
 
-            console.log(`Notification created for: ${task.title}`);
+            // Already claimed by another check
+            if (result.affectedRows === 0) {
+              return connection.commit(() => {
+                connection.release();
+                processNextTask();
+              });
+            }
+
+            const notificationSql = `
+                                INSERT INTO notifications
+                                (user_id, task_id, message)
+                                VALUES (?, ?, ?)
+                            `;
+
+            const message = `Reminder: ${task.title} is due soon.`;
+
+            connection.query(
+              notificationSql,
+              [task.user_id, task.id, message],
+              (notificationError) => {
+                if (notificationError) {
+                  return connection.rollback(() => {
+                    connection.release();
+                    console.error(notificationError);
+                    processNextTask();
+                  });
+                }
+
+                connection.commit((commitError) => {
+                  if (commitError) {
+                    return connection.rollback(() => {
+                      connection.release();
+                      console.error(commitError);
+                      processNextTask();
+                    });
+                  }
+
+                  connection.release();
+
+                  console.log(
+                    `Reminder notification created for task ${task.id}.`,
+                  );
+
+                  processNextTask();
+                });
+              },
+            );
           });
-        },
-      );
-    });
+        });
+      });
+    }
+
+    processNextTask();
   });
 }
 
-// Check immediately when the scheduler starts.
-checkReminders();
+// Start checking reminders
+function startReminderScheduler() {
+  console.log("Reminder scheduler started.");
 
-// Check again every 30 seconds.
-setInterval(checkReminders, 30000);
+  checkReminders();
+
+  setInterval(checkReminders, 30000);
+}
+
+module.exports = startReminderScheduler;
