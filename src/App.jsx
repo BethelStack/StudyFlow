@@ -1,26 +1,22 @@
-import { useEffect, useState } from "react";
-import api from "./services/api";
-
+import { Routes, Route } from "react-router-dom";
+import Dashboard from "./pages/Dashboard";
+import Login from "./pages/Login";
+import Register from "./pages/Register";
+import Calendar from "./pages/Calendar";
+import Notifications from "./pages/Notifications";
+import Tasks from "./pages/Tasks";
+import NotFound from "./pages/NotFound";
 function App() {
-  const [message, setMessage] = useState("Connecting...");
-
-  useEffect(() => {
-    api
-      .get("/api")
-      .then((response) => {
-        setMessage(response.data);
-      })
-      .catch((error) => {
-        console.error(error);
-        setMessage("Backend connection failed.");
-      });
-  }, []);
-
   return (
-    <div>
-      <h1>StudyFlow</h1>
-      <p>{message}</p>
-    </div>
+    <Routes>
+      <Route path="/" element={<Dashboard />} />
+      <Route path="/login" element={<Login />} />
+      <Route path="/register" element={<Register />} />
+      <Route path="/calendar" element={<Calendar />} />
+      <Route path="/notifications" element={<Notifications />} />
+      <Route path="/tasks" element={<Tasks />} />
+      <Route path="*" element={<NotFound />} />
+    </Routes>
   );
 }
 
