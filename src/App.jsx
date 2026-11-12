@@ -1,10 +1,27 @@
-import React from 'react'
+import { useEffect, useState } from "react";
+import api from "./services/api";
 
- function App() {
+function App() {
+  const [message, setMessage] = useState("Connecting...");
+
+  useEffect(() => {
+    api
+      .get("/api")
+      .then((response) => {
+        setMessage(response.data);
+      })
+      .catch((error) => {
+        console.error(error);
+        setMessage("Backend connection failed.");
+      });
+  }, []);
+
   return (
-    <>
-    <Dashboard />
-    </>
-  )
+    <div>
+      <h1>StudyFlow</h1>
+      <p>{message}</p>
+    </div>
+  );
 }
-export default App
+
+export default App;
